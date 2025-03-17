@@ -1,0 +1,16 @@
+version: "3.9"
+configs: { }
+services:
+  spring-apache-kafka-consumer:
+    container_name: ${serviceName}
+    environment: { }
+    image: ${serviceName}:${serviceVersion}
+    hostname: ${serviceName}
+    ports:
+      - 8106:8106
+    networks:
+      - apache-kafka-server-gateway-network
+networks:
+  apache-kafka-server-gateway-network:
+    name: apache-kafka-server-gateway-network
+    driver: bridge

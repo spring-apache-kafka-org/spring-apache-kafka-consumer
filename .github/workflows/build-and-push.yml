@@ -1,0 +1,88 @@
+name: Build and Push Docker Image on Docker Hub and Amazon ECR
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17 and Maven 3.9.4
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Maven 3.9.4
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget
+          wget https://downloads.apache.org/maven/maven-3/3.9.4/binaries/apache-maven-3.9.4-bin.tar.gz
+          tar -xvzf apache-maven-3.9.4-bin.tar.gz
+          sudo mv apache-maven-3.9.4 /opt/maven
+          echo "M2_HOME=/opt/maven" >> $GITHUB_ENV
+          echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
+          echo "/opt/maven/bin" >> $GITHUB_PATH
+
+      - name: Cache Maven Dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            maven-${{ runner.os }}-
+
+      - name: Verify Maven Version
+        run: mvn -version
+
+      - name: Build and Package with Maven Profile (Includes Docker Image Build)
+        run: mvn clean package -P build-docker-image
+
+      - name: Extract Artifact Name and Version
+        id: extract_vars
+        run: |
+          echo "IMAGE_NAME=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout)" >> $GITHUB_ENV
+          echo "TAG=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)" >> $GITHUB_ENV
+
+      - name: Clean up target folder
+        run: rm -rf target
+
+      - name: Log in to Docker Hub
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: Tag Docker Image
+        run: |
+          docker tag ${{ env.IMAGE_NAME }}:${{ env.TAG }} ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
+
+      - name: Push Docker Image to Docker Hub
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Log in to Amazon ECR  # Amazon ECR login
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Get AWS Account ID
+        run: echo "AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)" >> $GITHUB_ENV
+
+      - name: Tag Docker image
+        run: docker tag ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.TAG }} ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.IMAGE_NAME }}:${{ env.TAG }}
+
+      - name: Push Docker image to AWS ECR
+        run: docker push ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ env.IMAGE_NAME }}:${{ env.TAG }}
+
+      - name: Clean up Docker Cache
+        run: docker system prune -f

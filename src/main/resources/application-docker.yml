@@ -1,0 +1,3 @@
+spring:
+  kafka:
+    bootstrap-servers: "apache-kafka-0.apache-kafka.spring-apache-kafka.svc.cluster.local:9092"
